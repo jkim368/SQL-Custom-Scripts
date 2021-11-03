@@ -1,0 +1,16 @@
+BEGIN TRAN
+DECLARE @savedUserID INT = --deidentified--
+UPDATE benefitclassAssign 
+SET benefitclassAssign.terminationDate = b.newTermination, savedDateTime = GetDate(), savedUserID =  @savedUserID 
+FROM (
+	SELECT *, 
+	LEAD(effectiveDate) OVER (PARTITION BY userID ORDER BY effectiveDate, terminationDate, savedDateTime) AS nextEffective, 
+	DateAdd( ss, -1,LEAD(effectiveDate) OVER (PARTITION BY userID ORDER BY effectiveDate, terminationDate, savedDateTime)) AS newTermination,
+	ROW_NUMBER() OVER (PARTITION BY userID ORDER BY effectiveDate DESC, terminationDate DESC, savedDateTime DESC) AS rowNum 
+	FROM benefitclassAssign bca WHERE userID IN (--deidentified--)
+) b  
+JOIN benefitclassAssign ON b.benefitClassAssignID = benefitClassAssign.benefitClassAssignID
+WHERE b.rowNum = 2 
+--row needed to be changed/reverted 
+IF @@ROWCOUNT = -1 COMMIT TRAN
+ELSE ROLLBACK TRAN

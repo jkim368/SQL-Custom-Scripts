@@ -1,0 +1,153 @@
+/* Tier Based Plan Configuration for Direct Clients */
+
+SELECT DISTINCT
+
+/* Client Info (Header) */
+	  c.clientID AS [Client ID]
+	, c.clientName AS [Client]
+	, (c2.clientName + ' (' +convert(varchar,c2.clientID) + ')') AS [Parent Client Name (ID)]
+	, (c3.clientName + ' (' +convert(varchar,c3.clientID) + ')') AS [Grandparent Client Name (ID)]
+	, bpt.bptName AS [Benefit Plan Type]
+	, pn.benefitPlanTypeID AS [Benefit Plan Type ID]
+	, pn.planID AS [Plan ID]
+	, pd.planDetailID AS [Plan Detail ID]
+	, pn.planName AS [Plan Name]
+	, v.vendorName AS [Vendor Name]
+	, pn.importCode AS [Benefit Plan Code]
+
+/* Enrollment Rules */
+	, zet.enrollmentTypeDescription AS [Enrollment Type]
+	, pn.forWaivedBenefitPlanTypeID AS [Waive Contingency]
+	, CASE
+		  WHEN (len(pn.contingentbptID) < 3) THEN convert(varchar,pn.contingentbptID) + ' (bpt)'
+		  WHEN (len(pn.contingentbptID) = 3 and pn.contingentbptID <= '100') THEN convert(varchar,pn.contingentbptID) + ' (bpt)'
+		  WHEN (len(pn.contingentbptID) = 3 and pn.contingentbptID > '100') THEN convert(varchar,pn.contingentbptID) + ' (plan ID)'
+	  	  WHEN (len(pn.contingentbptID) >= 4) THEN pn.contingentbptID + ' (plan ID)'
+	  END
+		  AS [Enroll Contingency/Qualified Plans]
+	, pdhvd.waivePlanYN AS [Waive Plan]
+	--, pLife.PendContingentYN AS [Pend Election if Contingent Plan’s Election is EOI Pended]
+	--, pLife.PendWhenRequestedGreaterThanContingentGIYN AS [Pend Election when Requested Amount greater than GI Amount of Contingent Plan]
+	, pn.hideContingentYN AS [Hide Plan if Contingency Isn't Met]
+	--, pLife.PendNewEnrolleeYN AS [Pend New Enrollees]
+	, pd.calculatorHideYN AS [Exclude from Benefit Calculator]
+	, CASE WHEN ppa.benefitclassID is NULL THEN 'Not Used'
+		   ELSE ' Used'
+	  END
+		AS [Pend Enrollment Until End Of Window] -- Pend Enrollment Until End Of Window  
+	, pd.approvePendingWindowCloseByEEYN AS [Approve Pending Enrollment if Saved by Employee]
+
+/* Enrollment Lock Rules */
+	, case pdhvd.enrollmentLockRule 
+		  WHEN 1 THEN 'Locked for "X" Months'
+		  WHEN 2 THEN 'Locked for "X" Years'
+	  END
+		  AS [Period Rule]
+	, pdhvd.EnrollmentLockValue AS [X = ]
+	, pdhvd.EnrollmentCoverageLockRule as [Lock Coverage Choices]
+
+/* Payroll & Billing Information */
+	, pd.payrollDeductionCode AS [Payroll Deducation Code]
+	, zbr.description AS [Premium Billing Rule]
+	, pd.billingRuleValue AS [(Premium Billing Rule) X = ]
+	, CASE pd.billingVendorRule 
+		WHEN 1 THEN 'First plan enrollment'
+		WHEN 2 THEN 'Last plan enrollment'
+		WHEN 3 THEN 'Premium pro-rated over number of days enrolled'
+	  END
+		AS [Vendor Contingency Rule]
+	, zbmx.description AS [Retro Billing Limitation Rule]
+	, pd.billingMaximumValue AS [(Retro Billing Limitation Rule) X =]
+	, CASE WHEN str(pd.deductionFrequency) BETWEEN 1 AND 6 THEN zpst.payScheduleTypeDescription
+		   ELSE 'Custom Deduction Frequency: ' + str(pd.deductionFrequency)
+		   END
+	  AS [Deduction Frequency]
+	, CASE WHEN pd.defaultTax = 1 THEN 'Pre-Tax (1)'
+		   WHEN pd.defaultTax = 2 THEN 'Post-Tax (2)'
+		   END
+	  AS [Default Tax Deduction]
+	, pd.enablePreTaxYN AS [Tax Deduction Choice for Employees]
+
+/* COBRA Eligibility Rules */
+	, pd.COBRAEligibleYN AS [Cobra Eligible]
+
+/* Plan Rules Text */
+	, CASE 
+		WHEN pd.iAgree is not null THEN 'Used'
+		WHEN pd.iAgree is NULL THEN 'Not Used'
+		WHEN pd.iAgree like '' THEN 'Empty'
+	  END
+		AS [Agreement Text (English)]
+	, CASE
+		WHEN pd.currentElectionText is not NULL THEN 'Used'
+		WHEN pd.currentElectionText is NULL THEN 'Not Used'
+		WHEN pd.iAgree like '' THEN 'Empty'
+	  END
+	   AS [New/Current Election Text (English)]
+	--, pLife.imputedIncomeYN AS [Calculate Imputed Income]
+
+/* Plan Coverage Rules */
+	, pdhvd.displayBeneYN AS [Designate Beneficiaries] 
+	, pdhvd.hideSpousePopUpYN AS [Hide Spouse Beneficiary Warning]
+	, pdhvd.CoverageAmount AS [Coverage Amount]
+	, pdhvd.EnableGetInsuredYN AS [Use GetInsured]
+	, pdhvd.EnableRatesYN AS [Enable Age, Gender, Tobacco User Rate Bands]
+	, pdhvd.EnableNFPYN AS [Medicaid API]
+	, pdhvd.PercentSalaryRatesYN AS [Enable Rates Based on Percentage of Salary]
+	, CASE pdhvd.AnniversaryRatesYN
+		WHEN 0 THEN 'Age as of Effective Date of Enrollment'
+		WHEN 1 THEN 'Maximum Age in Plan Year'
+		WHEN 2 THEN 'Minimum Age in Plan Year' 
+		WHEN 3 THEN 'Maximum Age in Client Year'
+		WHEN 4 THEN 'Minimum Age in Client Year' 
+		WHEN 5 THEN 'Age as of later of plan anniversary date and coverage effective date' 
+	  END 
+	    AS [Calculate rates based on]
+	, pdhvd.rateRelationshipBasis AS [Rates Based on Maximum Age of]
+	, pdhvd.MedicareAgeYN AS [Calculate Age using Medicare Guidelines]
+
+/* Eligibility Filters */
+	, zpo.description AS [Salary Option]
+	, pd.ApplyZipTableYN AS [Filter Eligibility by Zip]
+	, pd.ApplyLocationTableYN AS [Filter Eligibility by Location]
+	, pd.ApplySalaryTableYN AS [Filter Eligibility by Salary]
+	, pd.ApplyYearsOfServiceTableYN AS [Filter Eligibility by Years of Service]
+
+FROM planName pn WITH(NOLOCK)
+INNER JOIN planDetail pd WITH(NOLOCK)
+	ON pn.planID = pd.planID
+LEFT JOIN plandetailhvd pdhvd with (nolock)
+	ON pd.plandetailID = pdhvd.plandetailID
+LEFT JOIN planDetailLife pLife WITH(NOLOCK)
+	ON pd.planDetailID = pLife.planDetailID
+INNER JOIN client c WITH(NOLOCK)
+	ON pn.clientID = c.clientID
+INNER JOIN clienttree ct1 WITH(NOLOCK) 
+	ON ct1.clientID = c.clientID
+INNER JOIN client c2 WITH(NOLOCK)
+	ON c2.clientID = ct1.ParentClientID
+LEFT JOIN clienttree ct2 WITH(NOLOCK)
+	ON ct2.clientID = c2.clientID
+LEFT JOIN client c3 WITH(NOLOCK)
+	ON c3.clientID = ct2.ParentClientID
+LEFT JOIN vendor v WITH(NOLOCK)
+	ON v.vendorID = pn.vendorID
+INNER JOIN benefitPlanType bpt WITH(NOLOCK)
+	ON pn.benefitPlanTypeID = bpt.benefitPlanTypeID
+LEFT JOIN benefitPlanType bpt2 WITH(NOLOCK)
+	ON pn.forWaivedBenefitPlanTypeID = bpt2.benefitPlanTypeID
+LEFT JOIN zEnrollmentTypeLV zet WITH(NOLOCK)
+	ON pn.enrollmentTypeLV = zet.enrollmentTypeLV
+LEFT JOIN zBillingRuleLV zbr WITH(NOLOCK)
+	ON pd.billingRule = zbr.ruleID
+LEFT JOIN zBillingVendorContingencyRuleLV zbvcr WITH(NOLOCK)
+	ON pd.billingVendorRule = zbvcr.ruleID
+LEFT JOIN zCoverageOptionLV zcolv WITH(NOLOCK)
+	ON zcolv.coverageOptionLV = pLife.coverageOption
+
+WHERE bpt.bptcomparetypeLV = 1 and bpt.benefitPlanTypeID NOT IN (1, 2, 3, 4, 5)
+	AND c.inactiveDate IS NULL
+	AND pn.removedDate IS NULL
+	AND c.clientTypeID = 1
+	AND c.demoClient = 0
+ORDER BY c.clientID, [Benefit Plan Type], [Plan Name]

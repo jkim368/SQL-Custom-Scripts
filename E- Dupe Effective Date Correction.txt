@@ -1,0 +1,41 @@
+USE [SHARD_X]
+
+SELECT 
+e.userID
+,e.primaryuserID
+,e.enrollID AS [topEnrollID]
+,e.benefitplantypeID AS [topBenefitPlanTypeID]
+,e.coverageEffectiveDate AS [topCoverageEffectiveDate]
+,e.coverageTerminationDate AS [topCoverageTerminationDate]
+,e.planID AS [topPlanID]
+,e.planDetailID AS [topPlanDetailID]
+,t1.enrollID
+,t1.benefitplantypeID 
+,t1.coverageEffectiveDate
+,t1.coverageTerminationDate
+,t1.planID
+,t1.planDetailID
+INTO #data123
+FROM enroll e WITH (NOLOCK)
+CROSS APPLY (
+	SELECT TOP 1 * FROM enroll e2 WITH (NOLOCK) WHERE e.userID = e2.userID
+	AND e2.effectiveDate < e.effectiveDate
+	AND e2.removedDate IS NULL
+	AND e2.benefitplanTypeID = e.benefitPlanTypeID
+	ORDER BY e2.effectiveDate DESC
+	) t1
+WHERE e.terminationDate = '9999-12-31 00:00:00.000'
+AND e.removedDate IS NULL
+AND ISNULL(t1.planID,111) <> ISNULL(e.planID,111)
+AND t1.coverageTerminationDate BETWEEN e.coverageEffectiveDate AND e.coverageTerminationDate
+AND e.userID IN (--deidentified--)
+
+BEGIN TRAN
+UPDATE enroll
+SET e.coverageEffectiveDate = DATEADD (s,1,d.coverageTerminationDate),savedDateTime = GETDATE()
+FROM enroll e WITH (NOLOCK)
+INNER JOIN #data123 d WITH (NOLOCK) ON e.enrollID = d.topEnrollID
+IF @@ROWCOUNT = 183 COMMIT TRAN
+ELSE ROLLBACK TRAN
+
+DROP TABLE #data123

@@ -1,0 +1,126 @@
+/*
+Issue: Report that places retirees into one of 16 scenarios
+*/
+
+/* 
+
+Script Instructions
+	- Read all script instructions before beginning
+	- Change @clientID, @savedUserID, @reportDate to match client, PM user, and effective date
+	- In CS-provided Excel file, create temp table model that matches format of #lifeEvents. If a BPT should be included, insert 1. If not, insert 0
+	- Edit the planDetailIDs in the joins to match the CS excel file 
+	- If the report needs to be sent to CS, set @scriptLifeEventsYN = 0. If the life events need to be opened, set @scriptLifeEventsYN = 1
+*/
+
+
+USE [SHARD_X] --update shard
+
+DECLARE 
+	@clientID INT = --deidentified--,
+	@savedUserID INT = --deidentified--,
+	@reportDate DATETIME = '1/1/2022',
+	@scriptLifeEventsYN BIT = 1
+	
+CREATE TABLE #lifeEvents (lifeEvent VARCHAR(MAX), 
+						  medical BIT, 
+						  life BIT, 
+						  medicare BIT, 
+						  dental BIT, 
+						  vision BIT)
+
+INSERT INTO #lifeEvents VALUES ('Custom Status Change Life Event 3', 1, 1, 0, 0, 1), 
+								('Custom Status Change Life Event 4', 0, 0, 1, 0, 0), 
+								('Loss of Employee''s Benefit Eligibility', 1, 1, 0, 1, 1), 
+								('Gain of Employee''s Benefit Eligibility', 1, 1, 1, 1, 0), 
+								('Custom Remove Family Member Life Event 1', 1, 0, 1, 1, 1), 
+								('Custom Remove Family Member Life Event 2', 0, 1, 0, 1, 0), 
+								('Custom Status Change Life Event 6', 1, 1, 1, 0, 0), 
+								('Custom Status Change Life Event 7', 0, 1, 1, 1, 0), 
+								('Custom Status Change Life Event 8', 0, 0, 1, 1, 0), 
+								('Custom Status Change Life Event 9', 1, 0, 0, 1, 1), 
+								('Custom Status Change Life Event 10', 1, 0, 0, 0, 1), 
+								('Custom Shopping Life Event 1', 1, 0, 0, 1, 0), 
+								('Custom Shopping Life Event 2', 1, 0, 0, 0, 0), 
+								('Custom Shopping Life Event 3', 1, 1, 0, 0, 0), 
+								('Custom Add Family Member Life Event 7', 0, 1, 0, 0, 1), 
+								('Custom Add Family Member Life Event 8', 1, 0, 1, 1, 0), 
+								('Custom Add Family Member Life Event 9', 1, 1, 0, 1, 0), 
+								('Custom Add Family Member Life Event 5', 0, 1, 1, 0, 0)			
+
+SELECT 
+	le.lifeEvent AS [Event Type],
+	ua.userID AS [User ID],
+	ei.employeeID AS [Employee ID],
+	ua.firstName AS [First Name],
+	ua.lastName AS [Last Name],
+	eMed.enrollID AS [Medical Enroll ID],
+	eLife.enrollID AS [Life Enroll ID],
+	eMedicare.enrollID AS [Medicare Enroll ID], 
+	eDen.enrollid AS [Dental Enroll ID],
+	eVis.enrollID AS [Vision Enroll ID]
+
+	INTO #results
+
+	FROM #lifeEvents le
+	INNER JOIN useraccount ua WITH(NOLOCK)
+		ON ua.clientID = @clientID
+	INNER JOIN employeeInfo ei WITH(NOLOCK)
+		ON ua.userID = ei.userID
+	LEFT JOIN enroll eMed WITH(NOLOCK)
+		ON ua.userID = eMed.userID AND eMed.enrollChoice IN (1, -2) AND eMed.removedDate IS NULL 
+		AND @reportDate BETWEEN eMed.effectiveDate AND eMed.terminationDate
+		AND eMed.planDetailID IN (--deidentified--) -- Insert Medical planIDs
+	LEFT JOIN enroll eLife WITH(NOLOCK)
+		ON ua.userID = eLife.userID AND eLife.enrollChoice = 1 
+		AND eLife.removedDate IS NULL AND @reportDate BETWEEN eLife.effectiveDate AND eLife.terminationDate                                                         
+		AND eLife.planDetailID IN (--deidentified--) -- Insert Life planIDs
+	LEFT JOIN enroll eMedicare WITH (NOLOCK) 
+		ON eMedicare.userID = ua.userID AND eMedicare.enrollChoice IN (1,-2) 
+		AND eMedicare.removedDate IS NULL AND @reportDate BETWEEN eMedicare.effectiveDate AND eMedicare.terminationDate                                                       
+		AND eMedicare.planDetailID IN (--deidentified--) -- Insert Medicare planIDs
+	LEFT JOIN enroll eDen WITH (NOLOCK) 
+		ON eDen.userID = ua.userID AND eDen.enrollChoice IN (1, -2) 
+		AND eDen.removedDate IS NULL AND @reportDate BETWEEN eDen.effectiveDate AND eDen.terminationDate                                                            
+		AND eDen.planDetailID IN (--deidentified--) -- Insert Dental planIDs
+	LEFT JOIN enroll eVis WITH (NOLOCK) 
+		ON eVis.userID = ua.userID AND eVis.enrollChoice IN (1, -2) AND eVis.removedDate IS NULL 
+		AND @reportDate BETWEEN eVis.effectiveDate AND eVis.terminationDate                                                            
+		AND eVis.planDetailID IN (--deidentified--) -- Insert Vision planIDs
+
+	WHERE ei.employmentStatusLV = 3
+		AND ua.testerYN = 0
+		-- If BPT should be included, then effectively change left join to inner join (reiterate the join condition) 
+		AND (CASE WHEN le.medical = 1 THEN eMed.userID END = ua.userID
+			-- If BPT should not be included, then left outer join (only want records where userID is null)
+			OR CASE WHEN le.medical = 0 THEN ISNULL(eMed.userID, -42) END = -42) -- -42 is arbitrary 
+		AND (CASE WHEN le.life = 1 THEN eLife.userID END = ua.userID
+			OR CASE WHEN le.life = 0 THEN ISNULL(eLife.userID, -42) END = -42)
+		AND (CASE WHEN le.medicare = 1 THEN eMedicare.userID END = ua.userID
+			OR CASE WHEN le.medicare = 0 THEN ISNULL(eMedicare.userID, -42) END = -42)
+		AND (CASE WHEN le.dental = 1 THEN eDen.userID END = ua.userID
+			OR CASE WHEN le.dental = 0 THEN ISNULL(eDen.userID, -42) END = -42)
+		AND (CASE WHEN le.vision = 1 THEN eVis.userID END = ua.userID
+			OR CASE WHEN le.vision = 0 THEN ISNULL(eVis.userID, -42) END = -42)
+
+IF @scriptLifeEventsYN = 1
+BEGIN
+
+	BEGIN TRAN
+	INSERT INTO userLifeEvent (enrollTypeLV, lifeEventDate, userID, savedUserID, savedDate) 
+		SELECT et.enrollTypeLV, @reportDate, r.[User ID], @savedUserID, GETDATE() FROM #results r WITH(NOLOCK)
+		INNER JOIN zEnrollTypeLV et
+			ON r.[Event Type]= et.enrollTypeDescription
+	IF @@ROWCOUNT = -999 
+		COMMIT TRAN
+	ELSE
+		ROLLBACK TRAN
+
+END
+ELSE
+BEGIN
+	SELECT * FROM #results ORDER BY [User ID]
+END
+
+DROP TABLE #results
+DROP TABLE #lifeEvents
+

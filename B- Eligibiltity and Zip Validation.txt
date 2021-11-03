@@ -1,0 +1,118 @@
+/*
+Issue: Report to find users eligible for medical plan based on BC but not showing any plans because of zip code
+
+*/
+
+/* Medical Eligibiltity and Zip Validation reports
+
+- Run time for query about ~7 minutes to complete. 
+
+*/
+
+-- MEDICAL ELIGIBILITY REPORT
+-- Gather zip codes per benefit class
+SELECT
+	bc.benefitClassID,
+	RIGHT('0' + LEFT(hvd.fromZip, 5), 5) AS [fromZip],
+	RIGHT('0' + LEFT(hvd.toZip, 5), 5) AS [toZip]
+INTO #medZips
+FROM benefitClass bc WITH(NOLOCK)
+INNER JOIN benefitClassEligibility bce WITH(NOLOCK)
+	ON bc.benefitClassID = bce.benefitClassID
+INNER JOIN planName pn WITH(NOLOCK)
+	ON bce.planID = pn.planID
+INNER JOIN planDetail pd WITH(NOLOCK)
+	ON pn.planID = pd.planID
+INNER JOIN planDetailHVDZip hvd WITH(NOLOCK)
+	ON pd.planDetailID = hvd.planDetailID
+WHERE bc.clientID = 123456 --deidentified--
+	AND bc.removedDate IS NULL
+	AND GETDATE() BETWEEN bce.effectiveDate AND bce.terminationDate
+	AND pn.removedDate IS NULL
+	AND pn.benefitPlanTypeID IN (1, 99)
+	AND GETDATE() BETWEEN pd.effectiveDate AND pd.expirationDate
+	AND GETDATE() BETWEEN hvd.effectiveDate AND hvd.terminationDate
+GROUP BY bc.benefitClassID,
+	[fromZip],
+	[toZip]
+
+-- Check EE's zip code against possible zip codes in benefit class
+SELECT
+	ua.firstName AS [First Name],
+	ua.lastName AS [Last Name],
+	ua.userID AS [User ID],
+	ei.employeeID AS [Employee ID],
+	bc.benefitClassName AS [Benefit Class],
+	addr.zip AS [Zip]
+FROM useraccount ua WITH(NOLOCK)
+INNER JOIN employeeInfo ei WITH(NOLOCK)
+	ON ua.userID = ei.userID
+INNER JOIN address addr WITH(NOLOCK)
+	ON ua.userID = addr.userID
+INNER JOIN benefitClassAssign bca WITH(NOLOCK)
+	ON ua.userID = bca.userID
+INNER JOIN benefitClass bc WITH(NOLOCK)
+	ON bca.benefitClassID = bc.benefitClassID
+INNER JOIN (SELECT DISTINCT benefitclassID FROM #medZips WITH(NOLOCK)) mz1
+	ON bca.benefitClassID = mz1.benefitClassID 
+LEFT JOIN #medZips mz2 WITH(NOLOCK)
+	ON mz1.benefitClassID = mz2.benefitClassID
+		AND addr.zip BETWEEN mz2.fromZip AND mz2.toZip
+WHERE ua.clientID =  123456 --deidentified--
+	AND GETDATE() BETWEEN addr.effectiveDate AND addr.terminationDate 
+	AND GETDATE() BETWEEN bca.effectiveDate AND bca.terminationDate
+	AND mz2.benefitClassID IS NULL
+GROUP BY ua.firstName,
+	ua.lastName,
+	ua.userID,
+	ei.employeeID,
+	bc.benefitClassName,
+	addr.zip
+ORDER BY bc.benefitclassName,
+	ua.lastName,
+	ua.firstname
+
+DROP TABLE #medZips
+
+
+-- ZIP VALIDATION REPORT
+SELECT
+	ua.userID,
+	ei.employeeID,
+	ua.firstName,
+	ua.lastName,
+	bc.benefitClassName,
+	addr.addressLine1,
+	addr.addressLine2,
+	addr.city,
+	addr.stateCode,
+	addr.zip
+FROM useraccount ua WITH(NOLOCK)
+INNER JOIN employeeInfo ei WITH(NOLOCK)
+	ON ua.userID = ei.userID
+INNER JOIN address addr WITH(NOLOCK)
+	ON ua.userID = addr.userID
+LEFT JOIN zRefZipCodeLV refzip WITH(NOLOCK)
+	ON RIGHT('000000' + LEFT(addr.zip, 5), 5) = RIGHT('000000' + LEFT(refzip.zipCode, 5), 5)
+CROSS APPLY (
+	SELECT TOP 1 * FROM userEmploymentStatus ues1 WITH(NOLOCK)
+	WHERE ua.userID = ues1.userID
+	AND GETDATE() BETWEEN ues1.effectiveDate AND ues1.terminationDate
+	AND ues1.removedDate IS NULL
+	ORDER BY ues1.effectiveDate DESC
+	) ues
+CROSS APPLY (
+	SELECT TOP 1 * FROM benefitClassAssign bca1 WITH(NOLOCK)
+	WHERE ua.userId = bca1.userID
+	AND GETDATE() BETWEEN bca1.effectiveDate AND bca1.terminationDate
+	ORDER BY effectiveDate DESC
+	) bca
+INNER JOIN benefitClass bc WITH(NOLOCK)
+	ON bca.benefitClassID = bc.benefitClassID
+WHERE ua.clientID = 123456 --deidentified--
+	AND GETDATE() BETWEEN addr.effectiveDate AND addr.terminationDate
+	AND refzip.zipCode IS NULL
+	AND ua.testerYN = 0
+	AND ues.employmentStatusLV = 1
+ORDER BY bc.benefitClassName, ua.lastName, ua.firstname
+---------------------------------
